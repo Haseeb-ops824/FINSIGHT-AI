@@ -10,6 +10,7 @@ def test_local_storage_round_trip(tmp_path, monkeypatch):
     monkeypatch.delenv("VERCEL", raising=False)
     monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "SUPABASE_URL", "")
+    monkeypatch.setattr(settings, "SUPABASE_SECRET_KEY", "")
     monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "")
 
     key = storage_service.document_object_key(7, "statement.pdf")
@@ -33,6 +34,7 @@ def test_remote_storage_upload_uses_private_service_credentials(monkeypatch):
     settings = get_settings()
     monkeypatch.delenv("VERCEL", raising=False)
     monkeypatch.setattr(settings, "SUPABASE_URL", "https://project.supabase.co/")
+    monkeypatch.setattr(settings, "SUPABASE_SECRET_KEY", "")
     monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "server-only-key")
     monkeypatch.setattr(settings, "SUPABASE_STORAGE_BUCKET", "finsight-private")
     captured = {}
@@ -56,6 +58,7 @@ def test_remote_storage_upload_uses_private_service_credentials(monkeypatch):
 def test_signed_upload_url_is_created_for_one_object(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_SECRET_KEY", "")
     monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "server-only-key")
     monkeypatch.setattr(settings, "SUPABASE_STORAGE_BUCKET", "finsight-private")
     captured = {}
@@ -79,9 +82,29 @@ def test_signed_upload_url_is_created_for_one_object(monkeypatch):
     assert captured["headers"]["x-upsert"] == "true"
 
 
+def test_remote_storage_uses_secret_key_without_bearer_header(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_SECRET_KEY", "sb_secret_server-only-key")
+    monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "")
+    monkeypatch.setattr(settings, "SUPABASE_STORAGE_BUCKET", "finsight-private")
+    captured = {}
+
+    def fake_post(url, headers, content, timeout):
+        captured.update(url=url, headers=headers)
+        return httpx.Response(200, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(storage_service.httpx, "post", fake_post)
+    storage_service.save_object("user_7/report.pdf", b"pdf bytes", "application/pdf")
+
+    assert captured["headers"]["apikey"] == "sb_secret_server-only-key"
+    assert "Authorization" not in captured["headers"]
+
+
 def test_remote_storage_error_includes_safe_response_detail(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_SECRET_KEY", "")
     monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "server-only-key")
     monkeypatch.setattr(settings, "SUPABASE_STORAGE_BUCKET", "finsight-private")
 
@@ -100,6 +123,7 @@ def test_remote_storage_error_includes_safe_response_detail(monkeypatch):
 def test_remote_private_download_uses_authenticated_route(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setattr(settings, "SUPABASE_SECRET_KEY", "")
     monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", "server-only-key")
     monkeypatch.setattr(settings, "SUPABASE_STORAGE_BUCKET", "finsight-private")
     captured = {}

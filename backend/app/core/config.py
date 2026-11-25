@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 25
     UPLOAD_DIR: str = "./uploads"
     SUPABASE_URL: str = ""
+    SUPABASE_SECRET_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     SUPABASE_STORAGE_BUCKET: str = "finsight-private"
 

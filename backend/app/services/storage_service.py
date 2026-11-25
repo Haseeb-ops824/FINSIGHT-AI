@@ -37,11 +37,16 @@ def _raise_for_storage_error(response: httpx.Response) -> None:
 def _supabase_config() -> Optional[Tuple[str, str, str]]:
     settings = get_settings()
     url = settings.SUPABASE_URL.strip().rstrip("/")
-    key = settings.SUPABASE_SERVICE_ROLE_KEY.strip()
+    key = (
+        settings.SUPABASE_SECRET_KEY.strip()
+        or settings.SUPABASE_SERVICE_ROLE_KEY.strip()
+    )
     bucket = settings.SUPABASE_STORAGE_BUCKET.strip()
 
     if bool(url) != bool(key):
-        raise RuntimeError("Set both SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.")
+        raise RuntimeError(
+            "Set SUPABASE_URL and either SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY."
+        )
     if os.environ.get("VERCEL") and not url:
         raise RuntimeError("Configure Supabase Storage before deploying the API on Vercel.")
     if not url:
@@ -132,7 +137,10 @@ def _remote_url(
 
 def _remote_headers(config: Tuple[str, str, str]) -> dict[str, str]:
     _, key, _ = config
-    return {"apikey": key, "Authorization": f"Bearer {key}"}
+    headers = {"apikey": key}
+    if not key.startswith("sb_secret_"):
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
 
 
 def save_object(key: str, content: bytes, content_type: str) -> None:

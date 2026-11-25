@@ -96,7 +96,7 @@ The production setup uses two Vercel projects: one for the Vite frontend and one
 1. Create a Supabase project and copy its project URL.
 2. In **Connect**, choose the **Transaction pooler** connection string and keep SSL enabled. Use that URI as `DATABASE_URL`; SQLAlchemy adapts `postgresql://` URIs to psycopg.
 3. In **Storage**, create a private bucket named `finsight-private`. Do not make it public.
-4. Copy the project service-role key for the backend environment only. Never put it in frontend variables or source control.
+4. Create a Supabase secret API key for the backend environment only. Never put it in frontend variables or source control.
 
 The API creates the SQLAlchemy tables at startup. Existing SQLite records and uploaded files are not automatically copied; a new deployment starts with an empty database.
 
@@ -111,11 +111,12 @@ Import the repository as a Vercel project and set its **Root Directory** to `bac
 | `DATABASE_URL` | Supabase Transaction pooler URI |
 | `MAX_UPLOAD_SIZE_MB` | `25` |
 | `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key |
+| `SUPABASE_SECRET_KEY` | Supabase secret API key (`sb_secret_...`) |
 | `SUPABASE_STORAGE_BUCKET` | `finsight-private` |
 | `CORS_ORIGINS` | Exact frontend origin, e.g. `https://your-site.vercel.app` |
 
 Add optional LLM variables only if you use conversational AI. Do not set wildcard or localhost CORS origins in the Vercel deployment. Redeploy after setting or changing environment variables. Once deployed, check `/api/health`.
+Existing deployments can continue to use `SUPABASE_SERVICE_ROLE_KEY`; when both key variables are set, `SUPABASE_SECRET_KEY` takes precedence.
 
 ### 3. Deploy the frontend
 
