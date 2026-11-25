@@ -111,6 +111,11 @@ class DocumentClassifyRequest(BaseModel):
     currency: Optional[str] = None
 
 
+class DocumentUploadSessionRequest(BaseModel):
+    filename: str = Field(..., min_length=1, max_length=255)
+    file_size_bytes: int = Field(..., gt=0)
+
+
 # --- Analysis ---
 class AnalysisResultOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)

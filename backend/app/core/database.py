@@ -16,8 +16,8 @@ if is_vercel:
         raise RuntimeError("DATABASE_URL must use PostgreSQL on Vercel.")
     if settings.APP_ENV != "production":
         raise RuntimeError("Set APP_ENV=production in the Vercel environment.")
-    if not 1 <= settings.MAX_UPLOAD_SIZE_MB <= 4:
-        raise RuntimeError("Set MAX_UPLOAD_SIZE_MB to a value from 1 to 4 on Vercel.")
+    if not 1 <= settings.MAX_UPLOAD_SIZE_MB <= 25:
+        raise RuntimeError("Set MAX_UPLOAD_SIZE_MB to a value from 1 to 25 on Vercel.")
     if (
         len(settings.SECRET_KEY) < 32
         or settings.SECRET_KEY

@@ -14,20 +14,29 @@ from app.schemas.schemas import (
     DocumentClassifyRequest,
     DocumentDetailOut,
     DocumentOut,
+    DocumentUploadSessionRequest,
     ExtractedMetricOut,
     TransactionOut,
 )
 from app.services.pipeline import run_document_pipeline
 from app.services.storage_service import (
     delete_object,
+    create_signed_upload_url,
     document_object_key,
     read_object,
     save_object,
+    StorageServiceError,
     temporary_file,
+    uses_remote_storage,
 )
 
 router = APIRouter(prefix="/api/documents", tags=["Documents"])
 ALLOWED_EXTENSIONS = {".pdf", ".csv", ".xlsx"}
+CONTENT_TYPES = {
+    ".pdf": "application/pdf",
+    ".csv": "text/csv",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
 
 
 def _get_user_doc(db: Session, doc_id: int, user_id: int) -> Document:
@@ -53,6 +62,56 @@ def list_documents(
         .all()
     )
     return [DocumentOut.model_validate(d) for d in docs]
+
+
+@router.post("/upload-session")
+def create_upload_session(
+    payload: DocumentUploadSessionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    settings = get_settings()
+    filename = Path(payload.filename).name
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Allowed formats: PDF (.pdf), Excel (.xlsx), CSV (.csv).",
+        )
+    if payload.file_size_bytes > settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_MB} MB.",
+        )
+
+    try:
+        remote_storage = uses_remote_storage()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not remote_storage:
+        return {"mode": "proxy"}
+
+    stored_name = f"{uuid.uuid4().hex}{ext}"
+    object_key = document_object_key(current_user.id, stored_name)
+    try:
+        upload_url = create_signed_upload_url(object_key)
+    except StorageServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    doc = Document(
+        user_id=current_user.id,
+        original_filename=filename,
+        stored_filename=stored_name,
+        file_type=ext.lstrip("."),
+        file_size_bytes=payload.file_size_bytes,
+        currency=current_user.preferred_currency or "PKR",
+        processing_status="uploading",
+        analysis_status="pending",
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return {"mode": "direct", "document_id": doc.id, "upload_url": upload_url}
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
@@ -84,12 +143,10 @@ async def upload_document(
     file_hash = hashlib.sha256(content).hexdigest()
     stored_name = f"{uuid.uuid4().hex}{ext}"
     object_key = document_object_key(current_user.id, stored_name)
-    content_types = {
-        ".pdf": "application/pdf",
-        ".csv": "text/csv",
-        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    }
-    save_object(object_key, content, content_types[ext])
+    try:
+        save_object(object_key, content, CONTENT_TYPES[ext])
+    except StorageServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     doc = Document(
         user_id=current_user.id,
@@ -106,6 +163,50 @@ async def upload_document(
     db.commit()
     db.refresh(doc)
 
+    with temporary_file(content, ext) as file_path:
+        doc = run_document_pipeline(
+            db=db,
+            doc=doc,
+            file_path=file_path,
+            default_currency=current_user.preferred_currency or "PKR",
+        )
+    return DocumentOut.model_validate(doc)
+
+
+@router.post("/{doc_id}/complete-upload", response_model=DocumentOut)
+def complete_document_upload(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = _get_user_doc(db, doc_id, current_user.id)
+    if doc.processing_status != "uploading":
+        raise HTTPException(status_code=409, detail="This document is not awaiting an upload.")
+
+    settings = get_settings()
+    object_key = document_object_key(current_user.id, doc.stored_filename)
+    try:
+        content = read_object(object_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail="Uploaded file was not found in storage.") from exc
+    except StorageServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_MB} MB.",
+        )
+    if len(content) != doc.file_size_bytes:
+        raise HTTPException(status_code=400, detail="Uploaded file size does not match the selected file.")
+
+    doc.file_size_bytes = len(content)
+    doc.file_hash = hashlib.sha256(content).hexdigest()
+    db.commit()
+
+    ext = Path(doc.stored_filename).suffix.lower()
     with temporary_file(content, ext) as file_path:
         doc = run_document_pipeline(
             db=db,

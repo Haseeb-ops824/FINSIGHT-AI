@@ -6,6 +6,15 @@ import type { DocumentItem } from '../types';
 import { AlertBanner, Card, formatFileSize } from '../components/UI';
 
 const ACCEPTED_EXTENSIONS = ['.pdf', '.csv', '.xlsx'];
+const CONTENT_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.csv': 'text/csv',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+type UploadSession =
+  | { mode: 'proxy' }
+  | { mode: 'direct'; document_id: number; upload_url: string };
 
 export function UploadPage() {
   const navigate = useNavigate();
@@ -44,15 +53,53 @@ export function UploadPage() {
     setError(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      const doc = await apiRequest<DocumentItem>('/documents/upload', {
+      const session = await apiRequest<UploadSession>('/documents/upload-session', {
         method: 'POST',
-        body: formData,
+        body: JSON.stringify({
+          filename: selectedFile.name,
+          file_size_bytes: selectedFile.size,
+        }),
       });
+      let doc: DocumentItem;
+      if (session.mode === 'proxy') {
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        doc = await apiRequest<DocumentItem>('/documents/upload', {
+          method: 'POST',
+          body: formData,
+        });
+      } else {
+        const ext = selectedFile.name.slice(selectedFile.name.lastIndexOf('.')).toLowerCase();
+        const response = await fetch(session.upload_url, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': CONTENT_TYPES[ext] || selectedFile.type || 'application/octet-stream',
+            'x-upsert': 'true',
+          },
+          body: selectedFile,
+        });
+        if (!response.ok) {
+          let detail = `Storage upload failed (${response.status}).`;
+          try {
+            const result: unknown = await response.json();
+            if (typeof result === 'object' && result !== null) {
+              const body = result as Record<string, unknown>;
+              const storageDetail = body.message || body.error;
+              if (typeof storageDetail === 'string') detail = storageDetail;
+            }
+          } catch {
+            // Keep the generic error when the storage response is not JSON.
+          }
+          throw new Error(detail);
+        }
+        doc = await apiRequest<DocumentItem>(
+          `/documents/${session.document_id}/complete-upload`,
+          { method: 'POST' }
+        );
+      }
       navigate(`/documents/${doc.id}/processing`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.detail : 'Upload failed');
+      setError(err instanceof ApiError ? err.detail : err instanceof Error ? err.message : 'Upload failed');
       setUploading(false);
     }
   };

@@ -109,7 +109,7 @@ Import the repository as a Vercel project and set its **Root Directory** to `bac
 | `APP_ENV` | `production` |
 | `SECRET_KEY` | A unique random string, at least 32 characters |
 | `DATABASE_URL` | Supabase Transaction pooler URI |
-| `MAX_UPLOAD_SIZE_MB` | `4` (Vercel request-body limit) |
+| `MAX_UPLOAD_SIZE_MB` | `25` |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key |
 | `SUPABASE_STORAGE_BUCKET` | `finsight-private` |
@@ -129,7 +129,7 @@ Deploy, then ensure the frontend's exact origin is included in the backend's `CO
 
 ### Free-tier limits and data handling
 
-- Uploads are limited to 4 MB on Vercel. Larger serverless request bodies require a direct-to-Storage upload flow, which this setup does not implement.
+- The frontend uploads files directly to a short-lived Supabase Storage signed URL, then asks the backend to process the stored file. The backend verifies the uploaded size and supports files up to 25 MB; set the private bucket's per-file limit to at least 25 MB.
 - Serverless filesystem storage is not persistent; production documents and reports are stored in the private Supabase bucket.
 - Free-tier service quotas and availability can change. Supabase Free projects may pause after inactivity and do not include downloadable database backups. This setup is suitable for a low-traffic demo, not a production availability or backup guarantee.
 - The backend uses Supabase's transaction pooler and one SQLAlchemy connection per function instance. Heavy document processing can still exceed free-tier function execution or memory limits.

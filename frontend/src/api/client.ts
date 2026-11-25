@@ -27,6 +27,12 @@ export async function apiRequest<T>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
+  if (import.meta.env.PROD && !import.meta.env.VITE_API_BASE_URL) {
+    throw new Error(
+      'Backend API URL is not configured. Set VITE_API_BASE_URL to your deployed backend URL, including /api.'
+    );
+  }
+
   const token = getAuthToken();
   const headers = new Headers(options.headers || {});
 

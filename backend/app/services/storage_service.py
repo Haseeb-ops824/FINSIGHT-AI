@@ -10,6 +10,30 @@ import httpx
 from app.core.config import get_settings
 
 
+class StorageServiceError(RuntimeError):
+    pass
+
+
+def _raise_for_storage_error(response: httpx.Response) -> None:
+    if response.is_success:
+        return
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = response.text
+
+    if isinstance(body, dict):
+        detail = body.get("message") or body.get("error") or body.get("statusCode")
+    else:
+        detail = body
+    if not detail:
+        detail = response.reason_phrase
+    raise StorageServiceError(
+        f"Supabase Storage returned HTTP {response.status_code}: {str(detail)[:500]}"
+    )
+
+
 def _supabase_config() -> Optional[Tuple[str, str, str]]:
     settings = get_settings()
     url = settings.SUPABASE_URL.strip().rstrip("/")
@@ -39,6 +63,45 @@ def document_object_key(user_id: int, filename: str) -> str:
 
 def report_object_key(user_id: int, filename: str) -> str:
     return f"user_{user_id}/reports/{filename}"
+
+
+def create_signed_upload_url(key: str) -> str:
+    config = _supabase_config()
+    if config is None:
+        raise StorageServiceError("Supabase Storage is not configured.")
+
+    url, _, bucket = config
+    encoded_bucket = quote(bucket, safe="")
+    encoded_key = quote(key, safe="/")
+    endpoint = (
+        f"{url}/storage/v1/object/upload/sign/"
+        f"{encoded_bucket}/{encoded_key}"
+    )
+    headers = _remote_headers(config)
+    headers["x-upsert"] = "true"
+    response = httpx.post(endpoint, headers=headers, timeout=15.0)
+    _raise_for_storage_error(response)
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise StorageServiceError("Supabase returned an invalid upload URL response.") from exc
+
+    signed_url = payload.get("url") or payload.get("signedURL") or payload.get("signedUrl")
+    if not signed_url and payload.get("token"):
+        signed_url = (
+            f"/object/upload/sign/{encoded_bucket}/{encoded_key}"
+            f"?token={quote(str(payload['token']), safe='')}"
+        )
+    if not isinstance(signed_url, str) or not signed_url:
+        raise StorageServiceError("Supabase did not return a signed upload URL.")
+    if signed_url.startswith("https://"):
+        return signed_url
+    if signed_url.startswith("/storage/v1/"):
+        return f"{url}{signed_url}"
+    if signed_url.startswith("/"):
+        return f"{url}/storage/v1{signed_url}"
+    return f"{url}/storage/v1/{signed_url}"
 
 
 def _local_path(key: str) -> Path:
@@ -89,7 +152,7 @@ def save_object(key: str, content: bytes, content_type: str) -> None:
         content=content,
         timeout=30.0,
     )
-    response.raise_for_status()
+    _raise_for_storage_error(response)
 
 
 def read_object(key: str) -> bytes:
@@ -104,7 +167,7 @@ def read_object(key: str) -> bytes:
     )
     if response.status_code == 404:
         raise FileNotFoundError(key)
-    response.raise_for_status()
+    _raise_for_storage_error(response)
     return response.content
 
 
@@ -124,7 +187,7 @@ def delete_object(key: str) -> None:
         json={"prefixes": [key]},
         timeout=30.0,
     )
-    response.raise_for_status()
+    _raise_for_storage_error(response)
 
 
 @contextmanager
